@@ -5,6 +5,9 @@
 #ifndef MAIN_LCD_H
 #define MAIN_LCD_H
 
+#include "driver/gpio.h"
+#include "esp_err.h"
+
 #define D0 6
 #define D1 7
 #define D2 8
@@ -25,5 +28,7 @@
 
 #define CMD_BITS 8
 #define PARAM_BITS 8
+
+esp_err_t lcd_init(gpio_num_t cs_pin);
 
 #endif//MAIN_LCD_H

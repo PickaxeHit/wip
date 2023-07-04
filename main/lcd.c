@@ -5,16 +5,18 @@
 #include "lcd.h"
 #include "driver/gpio.h"
 #include "esp_err.h"
+#include "esp_lcd_panel_interface.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <stdio.h>
 
-char *TAG = "lcd";
+static char *TAG = "lcd";
 
-static esp_lcd_i80_bus_handle_t i80_handle = NULL;
+static esp_lcd_i80_bus_handle_t i80_bus = NULL;
 static esp_lcd_i80_bus_config_t bus_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT,
         .dc_gpio_num = DC,
@@ -43,54 +45,77 @@ typedef struct lcd_llist_s {
     struct lcd_llist_s *next;
 } lcd_llist_t;
 
-lcd_llist_t *create_lcd_node(void) {
+static lcd_llist_t *header = NULL;
+
+lcd_llist_t *lcd_node_create(void) {
     lcd_llist_t *node = NULL;
-    node = (lcd_llist_t *) calloc(sizeof(lcd_llist_t));
-    if (node == NULL) {
-        ESP_LOGE(TAG, "No free memory for new llist node.");
-    }
+    node = (lcd_llist_t *) calloc(1, sizeof(lcd_llist_t));
+    if (node == NULL) { ESP_LOGE(TAG, "No free memory for new llist node."); }
     node->next = NULL;
     return node;
 }
 
-esp_err_t lcd_init(gpio_num_t cs_pin) {
-    if (i80_handle == NULL) {
-        ESP_ERROR_CHECK(esp_lcd_new_i80_bus(&bus_config, &i80_handle));
+void lcd_llist_insert(lcd_llist_t *llist, lcd_llist_t *insert) {
+    lcd_llist_t *p = llist;
+    insert->next = p->next;
+    p->next = insert;
+}
+lcd_llist_t *lcd_search(lcd_llist_t *llist, gpio_num_t cs_pin) {
+    lcd_llist_t *p = llist;
+    if (p->next == NULL) { return NULL; };
+    p = p->next;
+    while (p->cs_pin != cs_pin) {
+        if (p->next == NULL) {
+            return NULL;
+        } else {
+            p = p->next;
+        }
     }
+    return p;
+}
 
-    ESP_LOGI(TAG, "Turn on LCD");
+int lcd_node_delete(lcd_llist_t *llist, gpio_num_t cs_pin) {
+    lcd_llist_t *p = llist;
+    lcd_llist_t *prev = NULL;
+    while (p->next != NULL) {
+        prev = p;
+        p = p->next;
+        if (p->cs_pin == cs_pin) {
+            if (p->next != NULL) {
+                prev->next = p->next;
+                free(p);
+            } else {
+                prev->next = NULL;
+                free(p);
+            }
+            return 0;
+        }
+    }
+    return -1;
+}
+
+esp_err_t lcd_init(gpio_num_t cs_pin) {
+    if (i80_bus == NULL) {
+        ESP_ERROR_CHECK(esp_lcd_new_i80_bus(&bus_config, &i80_bus));
+        header = lcd_node_create();
+    }
+    if (lcd_search(header, cs_pin) != NULL) {
+        ESP_LOGE(TAG, "This LCD has already initialized.");
+        return ESP_ERR_INVALID_ARG;
+    }
+    lcd_llist_t *lcd = lcd_node_create();
+    lcd->cs_pin = cs_pin;
+
+    ESP_LOGI(TAG, "Turn off LCD");
     gpio_config_t bk_gpio_config = {.mode = GPIO_MODE_OUTPUT,
                                     .pin_bit_mask = 1ULL << BK};
     ESP_ERROR_CHECK(gpio_config(&bk_gpio_config));
-    gpio_set_level(BK, 1);
+    gpio_set_level(BK, 0);
 
-    ESP_LOGI(TAG, "Initialize Intel 8080 bus");
-    esp_lcd_i80_bus_handle_t i80_bus = NULL;
-    esp_lcd_i80_bus_config_t bus_config = {
-            .clk_src = LCD_CLK_SRC_DEFAULT,
-            .dc_gpio_num = DC,
-            .wr_gpio_num = PCLK,
-            .data_gpio_nums =
-                    {
-                            D0,
-                            D1,
-                            D2,
-                            D3,
-                            D4,
-                            D5,
-                            D6,
-                            D7,
-                    },
-            .bus_width = 8,
-            .max_transfer_bytes = 240 * 480 * sizeof(uint16_t),
-            .psram_trans_align = 64,
-            .sram_trans_align = 4,
-    };
-    ESP_ERROR_CHECK(esp_lcd_new_i80_bus(&bus_config, &i80_bus));
     esp_lcd_panel_io_handle_t io_handle = NULL;
     esp_lcd_panel_io_i80_config_t io_config = {
-            .cs_gpio_num = CS,
-            .pclk_hz = 2 * 1000 * 1000,
+            .cs_gpio_num = cs_pin,
+            .pclk_hz = 20 * 1000 * 1000,
             .trans_queue_depth = 10,
             .dc_levels =
                     {
@@ -103,6 +128,7 @@ esp_err_t lcd_init(gpio_num_t cs_pin) {
             .lcd_param_bits = PARAM_BITS,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_i80(i80_bus, &io_config, &io_handle));
+    lcd->io_handle = io_handle;
 
     esp_lcd_panel_handle_t panel_handle = NULL;
     ESP_LOGI(TAG, "Install LCD driver of st7789");
@@ -113,6 +139,8 @@ esp_err_t lcd_init(gpio_num_t cs_pin) {
     };
     ESP_ERROR_CHECK(
             esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
+    lcd->panel_handle = panel_handle;
+
     esp_lcd_panel_reset(panel_handle);
     //esp_lcd_panel_init(panel_handle);
     esp_lcd_panel_invert_color(panel_handle, true);
@@ -147,10 +175,37 @@ esp_err_t lcd_init(gpio_num_t cs_pin) {
     esp_lcd_panel_io_tx_param(io_handle, 0x21, NULL, 0);
     esp_lcd_panel_io_tx_param(io_handle, 0x11, NULL, 0);
     vTaskDelay(120 / portTICK_PERIOD_MS);
-    esp_lcd_panel_io_tx_param(io_handle, 0x2A, (uint8_t[]){0, 239, 0, 239}, 2);
-    esp_lcd_panel_io_tx_param(io_handle, 0x2B, (uint8_t[]){0, 239, 0, 239}, 2);
-    esp_lcd_panel_io_tx_param(io_handle, 0x13, NULL, 0);
+
+
+    esp_lcd_panel_io_tx_param(io_handle, 0x2A,
+                              (uint8_t[]){
+                                      (0 >> 8) & 0xFF,
+                                      0 & 0xFF,
+                                      ((240 - 1) >> 8) & 0xFF,
+                                      (240 - 1) & 0xFF,
+                              },
+                              4);
+    esp_lcd_panel_io_tx_param(io_handle, 0x2B,
+                              (uint8_t[]){
+                                      (0 >> 8) & 0xFF,
+                                      0 & 0xFF,
+                                      ((240 - 1) >> 8) & 0xFF,
+                                      (240 - 1) & 0xFF,
+                              },
+                              4);
+    esp_lcd_panel_io_tx_param(io_handle, 0x2C, NULL, 0);
+    for (uint16_t i = 0; i < 3600; i++) {
+        esp_lcd_panel_io_tx_color(
+                io_handle, -1,
+                (uint8_t[]){0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+                32);
+    }
 
     esp_lcd_panel_io_tx_param(io_handle, 0x29, NULL, 0);
+    ESP_LOGI(TAG, "Turn on LCD");
+    gpio_set_level(BK, 1);
     return 0;
 }
