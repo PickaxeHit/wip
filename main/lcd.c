@@ -84,9 +84,11 @@ int lcd_node_delete(lcd_llist_t *llist, gpio_num_t cs_pin) {
             if (p->next != NULL) {
                 prev->next = p->next;
                 free(p);
+                p = NULL;
             } else {
                 prev->next = NULL;
                 free(p);
+                p = NULL;
             }
             return 0;
         }
@@ -97,13 +99,14 @@ int lcd_node_delete(lcd_llist_t *llist, gpio_num_t cs_pin) {
 esp_err_t lcd_init(gpio_num_t cs_pin) {
     if (i80_bus == NULL) {
         ESP_ERROR_CHECK(esp_lcd_new_i80_bus(&bus_config, &i80_bus));
-        header = lcd_node_create();
+        if (header == NULL) { header = lcd_node_create(); }
     }
     if (lcd_search(header, cs_pin) != NULL) {
         ESP_LOGE(TAG, "This LCD has already initialized.");
         return ESP_ERR_INVALID_ARG;
     }
     lcd_llist_t *lcd = lcd_node_create();
+    lcd_llist_insert(header, lcd);
     lcd->cs_pin = cs_pin;
 
     ESP_LOGI(TAG, "Turn off LCD");
@@ -142,7 +145,6 @@ esp_err_t lcd_init(gpio_num_t cs_pin) {
     lcd->panel_handle = panel_handle;
 
     esp_lcd_panel_reset(panel_handle);
-    //esp_lcd_panel_init(panel_handle);
     esp_lcd_panel_invert_color(panel_handle, true);
     esp_lcd_panel_set_gap(panel_handle, 0, 80);
     esp_lcd_panel_io_tx_param(io_handle, 0x11, NULL, 0);
@@ -208,4 +210,25 @@ esp_err_t lcd_init(gpio_num_t cs_pin) {
     ESP_LOGI(TAG, "Turn on LCD");
     gpio_set_level(BK, 1);
     return 0;
+}
+
+esp_err_t lcd_delete(gpio_num_t cs_pin) {
+    lcd_llist_t *p = lcd_search(header, cs_pin);
+    if (p == NULL) {
+        ESP_LOGE(TAG, "This LCD has not initialized.");
+        return ESP_ERR_INVALID_ARG;
+    } else {
+        esp_lcd_panel_reset(p->panel_handle);
+        ESP_ERROR_CHECK(esp_lcd_panel_del(p->panel_handle));
+        ESP_LOGI(TAG, "Panel deleted.");
+        ESP_ERROR_CHECK(esp_lcd_panel_io_del(p->io_handle));
+        ESP_LOGI(TAG, "Panel IO deleted.");
+        lcd_node_delete(header, cs_pin);
+        if (header->next == NULL) {
+            ESP_ERROR_CHECK(esp_lcd_del_i80_bus(i80_bus));
+            i80_bus = NULL;
+            ESP_LOGI(TAG, "I80 bus deleted.");
+        }
+        return ESP_OK;
+    }
 }

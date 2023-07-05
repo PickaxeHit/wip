@@ -31,4 +31,6 @@
 
 esp_err_t lcd_init(gpio_num_t cs_pin);
 
+esp_err_t lcd_delete(gpio_num_t cs_pin);
+
 #endif//MAIN_LCD_H
