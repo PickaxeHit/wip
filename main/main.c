@@ -4,6 +4,6 @@ static char *TAG = "main";
 
 void app_main(void) {
     lcd_init(CS);
-    //do sth here.
+    //do something here.
     lcd_delete(CS);
 }
