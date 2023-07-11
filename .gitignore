@@ -1,4 +1,4 @@
 build/
 sdkconfig.old
 .cache/
-
+components/elfloader/test/
