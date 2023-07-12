@@ -54,14 +54,9 @@ void unaligned_copy(void *dest, void *src, size_t size) {
             *(adest + i) = *(asrc + i);
         }
         size_t remaining = size % 4;
-        for (size_t i = remaining; i > 0; i--) {
-<<<<<<< HEAD
-            uint8_t value = unaligned_get8(src + (size - remaining + i));
-            unaligned_set8(dest + (size - remaining + i), value);
-=======
-            uint8_t value = unaligned_get8((src + (size - i)));
-            unaligned_set8(dest + (size - i), value);
->>>>>>> origin/master
+        for (size_t i = 0; i < remaining; i++) {
+            uint8_t value = unaligned_get8((src + size + i - remaining));
+            unaligned_set8(dest + size - remaining + i, value);
         }
     } else if (((uintptr_t) dest & 0x3) == ((uintptr_t) src & 0x3)) {
         size_t unaligned = 4 - ((uintptr_t) dest & 0x3);
