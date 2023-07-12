@@ -54,12 +54,15 @@ void unaligned_copy(void *dest, void *src, size_t size) {
             *(adest + i) = *(asrc + i);
         }
         size_t remaining = size % 4;
-        for (size_t i = remaining; i > 0; i--) {
-            uint8_t value = unaligned_get8((src + (size - i)));
-            unaligned_set8(dest + (size - i), value);
+        for (size_t i = 0; i < remaining; i++) {
+            uint8_t value = unaligned_get8((src + size + i - remaining));
+            unaligned_set8(dest + size - remaining + i, value);
         }
     } else if (((uintptr_t) dest & 0x3) == ((uintptr_t) src & 0x3)) {
         size_t unaligned = 4 - ((uintptr_t) dest & 0x3);
+        if (unaligned > size) {
+            unaligned = size;
+        }
         uint32_t *adest = (uint32_t *) ((uintptr_t) dest + unaligned);
         uint32_t *asrc = (uint32_t *) ((uintptr_t) src + unaligned);
         for (size_t i = 0; i < unaligned; i++) {
@@ -71,9 +74,9 @@ void unaligned_copy(void *dest, void *src, size_t size) {
             *(adest + i) = *(asrc + i);
         }
         size_t remaining = (size - unaligned) % 4;
-        for (size_t i = remaining; i > 0; i--) {
-            uint8_t value = unaligned_get8((src + (size - i)));
-            unaligned_set8(dest + (size - i), value);
+        for (size_t i = 0; i < remaining; i++) {
+            uint8_t value = unaligned_get8((src + size + i - remaining));
+            unaligned_set8(dest + size - remaining + i, value);
         }
     } else {
         for (; size > 0; csrc++, cdest++, size--) {
