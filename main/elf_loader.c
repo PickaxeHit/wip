@@ -141,3 +141,135 @@ static const char *type_to_string(uint8_t symbol_type) {
             return "R_<unknow>";
     }
 }
+
+static int loader_relocate_symbol(Elf32_Addr rel_addr, uint8_t symbol_type, Elf32_Addr symbol_addr, Elf32_Addr def_addr,
+                                  uint32_t *from, uint32_t *to) {
+    if (symbol_addr == 0xffffffff) {
+        if (def_addr == 0x00000000) {
+            ESP_LOGE(TAG, "Relocation: undefined symbol_addr");
+            return -1;
+        } else {
+            symbol_addr = def_addr;
+        }
+    }
+    switch (symbol_type) {
+        case R_XTENSA_32: {
+            *from = unaligned_get32((void *) rel_addr);
+            *to = symbol_addr + *from;
+            unaligned_set32((void *) rel_addr, *to);
+            break;
+        }
+        case R_XTENSA_SLOT0_OP: {
+            uint32_t v = unaligned_get32((void *) rel_addr);
+            *from = v;
+
+            /* *** Format: L32R *** */
+            if ((v & 0x00000F) == 0x000001) {
+                int32_t delta = symbol_addr - ((rel_addr + 3) & 0xfffffffc);
+                if (delta & 0x0000003) {
+                    ESP_LOGE(TAG, "Relocation: L32R error");
+                    return -1;
+                }
+                delta = delta >> 2;
+                unaligned_set8((void *) (rel_addr + 1), ((uint8_t *) &delta)[0]);
+                unaligned_set8((void *) (rel_addr + 2), ((uint8_t *) &delta)[1]);
+                *to = unaligned_get32((void *) rel_addr);
+                break;
+            }
+
+            /* *** Format: CALL *** */
+            /* *** CALL0, CALL4, CALL8, CALL12, J *** */
+            if ((v & 0x00000F) == 0x000005) {
+                int32_t delta = symbol_addr - ((rel_addr + 4) & 0xfffffffc);
+                if (delta & 0x0000003) {
+                    ESP_LOGE(TAG, "Relocation: CALL error");
+                    return -1;
+                }
+                delta = delta >> 2;
+                delta = delta << 6;
+                delta |= unaligned_get8((void *) (rel_addr + 0));
+                unaligned_set8((void *) (rel_addr + 0), ((uint8_t *) &delta)[0]);
+                unaligned_set8((void *) (rel_addr + 1), ((uint8_t *) &delta)[1]);
+                unaligned_set8((void *) (rel_addr + 2), ((uint8_t *) &delta)[2]);
+                *to = unaligned_get32((void *) rel_addr);
+                break;
+            }
+
+            /* *** J *** */
+            if ((v & 0x00003F) == 0x000006) {
+                int32_t delta = symbol_addr - (rel_addr + 4);
+                delta = delta << 6;
+                delta |= unaligned_get8((void *) (rel_addr + 0));
+                unaligned_set8((void *) (rel_addr + 0), ((uint8_t *) &delta)[0]);
+                unaligned_set8((void *) (rel_addr + 1), ((uint8_t *) &delta)[1]);
+                unaligned_set8((void *) (rel_addr + 2), ((uint8_t *) &delta)[2]);
+                *to = unaligned_get32((void *) rel_addr);
+                break;
+            }
+
+            /* *** Format: BRI8  *** */
+            /* *** BALL, BANY, BBC, BBCI, BBCI.L, BBS,  BBSI, BBSI.L, BEQ, BGE,  BGEU, BLT, BLTU, BNALL, BNE,  BNONE, LOOP,  *** */
+            /* *** BEQI, BF, BGEI, BGEUI, BLTI, BLTUI, BNEI,  BT, LOOPGTZ, LOOPNEZ *** */
+            if (((v & 0x00000F) == 0x000007) || ((v & 0x00003F) == 0x000026) ||
+                ((v & 0x00003F) == 0x000036 && (v & 0x0000FF) != 0x000036)) {
+                int32_t delta = symbol_addr - (rel_addr + 4);
+                unaligned_set8((void *) (rel_addr + 2), ((uint8_t *) &delta)[0]);
+                *to = unaligned_get32((void *) rel_addr);
+                if ((delta < -(1 << 7)) || (delta >= (1 << 7))) {
+                    ESP_LOGE(TAG, "Relocation: BRI8 out of range");
+                    return -1;
+                }
+                break;
+            }
+
+            /* *** Format: BRI12 *** */
+            /* *** BEQZ, BGEZ, BLTZ, BNEZ *** */
+            if ((v & 0x00003F) == 0x000016) {
+                int32_t delta = symbol_addr - (rel_addr + 4);
+                delta = delta << 4;
+                delta |= unaligned_get32((void *) (rel_addr + 1));
+                unaligned_set8((void *) (rel_addr + 1), ((uint8_t *) &delta)[0]);
+                unaligned_set8((void *) (rel_addr + 2), ((uint8_t *) &delta)[1]);
+                *to = unaligned_get32((void *) rel_addr);
+                delta = symbol_addr - (rel_addr + 4);
+                if ((delta < -(1 << 11)) || (delta >= (1 << 11))) {
+                    ESP_LOGE(TAG, "Relocation: BRI12 out of range");
+                    return -1;
+                }
+                break;
+            }
+
+            /* *** Format: RI6  *** */
+            /* *** BEQZ.N, BNEZ.N *** */
+            if ((v & 0x008F) == 0x008C) {
+                int32_t delta = symbol_addr - (rel_addr + 4);
+                int32_t d2 = delta & 0x30;
+                int32_t d1 = (delta << 4) & 0xf0;
+                d2 |= unaligned_get32((void *) (rel_addr + 0));
+                d1 |= unaligned_get32((void *) (rel_addr + 1));
+                unaligned_set8((void *) (rel_addr + 0), ((uint8_t *) &d2)[0]);
+                unaligned_set8((void *) (rel_addr + 1), ((uint8_t *) &d1)[0]);
+                *to = unaligned_get32((void *) rel_addr);
+                if ((delta < 0) || (delta > 0x111111)) {
+                    ESP_LOGE(TAG, "Relocation: RI6 out of range");
+                    return -1;
+                }
+                break;
+            }
+
+            ESP_LOGE(TAG, "Relocation: unknown opcode %08X", v);
+            return -1;
+            break;
+        }
+        case R_XTENSA_ASM_EXPAND: {
+            *from = unaligned_get32((void *) rel_addr);
+            *to = unaligned_get32((void *) rel_addr);
+            break;
+        }
+        default:
+            ESP_LOGI(TAG, "Relocation: undefined relocation %d %s", symbol_type, type_to_string(symbol_type));
+            assert(0);
+            return -1;
+    }
+    return 0;
+}
