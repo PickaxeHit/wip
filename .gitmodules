@@ -1,0 +1,3 @@
+[submodule "components/elf_loader"]
+	path = components/elf_loader
+	url = https://github.com/PickaxeHit/elf_loader.git
