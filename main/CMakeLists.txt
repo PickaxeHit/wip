@@ -1,2 +1,2 @@
-idf_component_register(SRCS "main.c" "lcd.c" "elf_loader.c" "unaligned.c"
+idf_component_register(SRCS "main.c" "lcd.c"
         INCLUDE_DIRS ".")
