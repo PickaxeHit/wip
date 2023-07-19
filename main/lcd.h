@@ -29,7 +29,7 @@
 #define CMD_BITS 8
 #define PARAM_BITS 8
 
-esp_err_t lcd_init(gpio_num_t cs_pin);
+esp_err_t lcd_panel_init(gpio_num_t cs_pin);
 
 esp_err_t lcd_delete(gpio_num_t cs_pin);
 
