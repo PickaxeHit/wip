@@ -18,7 +18,6 @@ static const elf_loader_symbol_t exports[] = {
 static const elf_loader_env_t env = {exports, sizeof(exports) / sizeof(*exports)};
 
 void app_main(void) {
-    ESP_LOGI(TAG, "Let's go!\n");
     void *elf = heap_caps_calloc(1, payload_elf_len, MALLOC_CAP_SPIRAM);
     memcpy(elf, (const void *) payload_elf, payload_elf_len);
 
